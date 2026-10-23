@@ -59,10 +59,28 @@ class Settings {
   static File? _file;
 
   static Future<void> init() async {
-    final home = Platform.environment['HOME'] ?? Directory.current.path;
-    final dir = Directory('$home/rcpu_miner');
-    if (!await dir.exists()) await dir.create(recursive: true);
-    _file = File('${dir.path}/settings.json');
+    try {
+      // Android 上 HOME 常为空，目录名从可写位置里挑第一个成功的。
+      final candidates = <String>[
+        if ((Platform.environment['HOME'] ?? '').isNotEmpty)
+          Platform.environment['HOME']!,
+        if ((Platform.environment['TMPDIR'] ?? '').isNotEmpty)
+          Platform.environment['TMPDIR']!,
+        Directory.systemTemp.path,
+      ];
+      for (final base in candidates) {
+        try {
+          final dir = Directory('$base/rcpu_miner');
+          if (!await dir.exists()) await dir.create(recursive: true);
+          final probe = File('${dir.path}/.ok');
+          await probe.writeAsString('1');
+          _file = File('${dir.path}/settings.json');
+          return;
+        } catch (_) {
+          continue;
+        }
+      }
+    } catch (_) {}
   }
 
   static Future<Settings> load() async {
@@ -135,6 +153,7 @@ class _MinerPageState extends State<MinerPage> {
   StreamSubscription<String>? _sub;
   final List<String> _logs = <String>[];
   String? _nativeDir;
+  String _dirSource = '';
 
   bool _running = false;
   double _hashrate = 0;
@@ -153,11 +172,7 @@ class _MinerPageState extends State<MinerPage> {
   Future<void> _boot() async {
     await Settings.init();
     final loaded = await Settings.load();
-    try {
-      _nativeDir = await _channel.invokeMethod<String>('nativeLibDir');
-    } catch (_) {
-      _nativeDir = null;
-    }
+    _nativeDir = await _resolveNativeDir();
     if (!mounted) return;
     setState(() {
       _settings.wallet = loaded.wallet;
@@ -173,6 +188,43 @@ class _MinerPageState extends State<MinerPage> {
     });
   }
 
+  /// 找原生库目录。优先问原生层，失败则从 /proc/self/maps 里
+  /// 反查 libflutter.so 的位置——比自己拼路径可靠。
+  Future<String?> _resolveNativeDir() async {
+    try {
+      final dir = await _channel.invokeMethod<String>('nativeLibDir');
+      if (dir != null && dir.isNotEmpty) {
+        _dirSource = 'channel';
+        return dir;
+      }
+    } catch (e) {
+      _dirSource = 'channel failed: $e';
+    }
+    final fromMaps = await _dirFromMaps();
+    if (fromMaps != null) {
+      _dirSource = 'maps: $fromMaps';
+      return fromMaps;
+    }
+    _dirSource = 'not found';
+    return null;
+  }
+
+  Future<String?> _dirFromMaps() async {
+    try {
+      final maps = await File('/proc/self/maps').readAsString();
+      for (final line in maps.split('\n')) {
+        if (line.contains('libflutter.so') || line.contains('libapp.so')) {
+          final parts = line.trim().split(RegExp(r'\s+'));
+          final path = parts.isEmpty ? '' : parts.last;
+          if (path.startsWith('/')) {
+            return path.substring(0, path.lastIndexOf('/'));
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   @override
   void dispose() {
     _stopMiner();
@@ -183,11 +235,18 @@ class _MinerPageState extends State<MinerPage> {
     super.dispose();
   }
 
-  String _binaryPath() {
+  Future<String> _binaryPath() async {
+    final candidates = <String>[];
     if (_nativeDir != null && _nativeDir!.isNotEmpty) {
-      return '$_nativeDir/libminerdrcpu.so';
+      candidates.add('$_nativeDir/libminerdrcpu.so');
     }
-    return 'libminerdrcpu.so';
+    candidates.add('libminerdrcpu.so');
+    for (final c in candidates) {
+      try {
+        if (c == 'libminerdrcpu.so' || await File(c).exists()) return c;
+      } catch (_) {}
+    }
+    return candidates.last;
   }
 
   void _append(String line) {
@@ -275,7 +334,9 @@ class _MinerPageState extends State<MinerPage> {
     ];
 
     try {
-      final bin = _binaryPath();
+      final bin = await _binaryPath();
+      // 把定位结果先写进日志，方便排查路径问题。
+      _logs.add('native dir: ${_nativeDir ?? "(none)"} [$_dirSource]');
       final p = await Process.start(bin, args);
       _proc = p;
       _startedAt = DateTime.now();
