@@ -12,6 +12,15 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     // 原生库目录：libminerdrcpu.so 被安装在这里，可直接执行
                     "nativeLibDir" -> result.success(applicationInfo.nativeLibraryDir)
+                    // 让界面显示真实安装版本，避免和文件名对不上
+                    "appVersion" -> {
+                        try {
+                            val info = packageManager.getPackageInfo(packageName, 0)
+                            result.success(info.versionName ?: "?")
+                        } catch (e: Exception) {
+                            result.success("?")
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }

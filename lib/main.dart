@@ -158,6 +158,7 @@ class _MinerPageState extends State<MinerPage> {
   final int _cores = Platform.numberOfProcessors;
   String? _nativeDir;
   String _dirSource = '';
+  String _appVersion = '';
 
   bool _running = false;
   double _hashrate = 0;
@@ -177,6 +178,11 @@ class _MinerPageState extends State<MinerPage> {
     await Settings.init();
     final loaded = await Settings.load();
     _nativeDir = await _resolveNativeDir();
+    try {
+      _appVersion = await _channel.invokeMethod<String>('appVersion') ?? '';
+    } catch (_) {
+      _appVersion = '';
+    }
     if (!mounted) return;
     setState(() {
       _settings.wallet = loaded.wallet;
@@ -467,6 +473,11 @@ class _MinerPageState extends State<MinerPage> {
             Text(S.title,
                 style:
                     const TextStyle(fontSize: 15, fontWeight: FontWeight.w400)),
+            if (_appVersion.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Text('v$_appVersion',
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF8B949E))),
+            ],
           ],
         ),
         actions: [
