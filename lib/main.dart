@@ -19,8 +19,8 @@ class S {
   static String get walletHint =>
       L.t('你的 rcpu1… 地址，不要用 rcpux1…', 'Your rcpu1… address, never rcpux1…');
   static String get pool => L.t('矿池地址', 'Pool address');
-  static String get poolHint => L.t('主机:端口 或 stratum+tcp://主机:端口',
-      'host:port or stratum+tcp://host:port');
+  static String get poolHint =>
+      L.t('stratum+tcp://主机:端口', 'stratum+tcp://host:port');
   static String get threads => L.t('线程数', 'Threads');
   static String get start => L.t('开始挖矿', 'Start mining');
   static String get stop => L.t('停止', 'Stop');
@@ -39,8 +39,8 @@ class S {
   static String get walletConfidential => L.t(
       '不能用 rcpux1 机密地址挖矿，请填 rcpu1',
       'rcpux1 confidential addresses cannot mine, use rcpu1');
-  static String get poolInvalid => L.t('矿池地址格式不对，应为 主机:端口（可带 stratum+tcp:// 前缀）',
-      'Pool must be host:port (stratum+tcp:// optional)');
+  static String get poolInvalid => L.t('矿池地址格式不对，应为 stratum+tcp://主机:端口',
+      'Pool must look like stratum+tcp://host:port');
   static String get startFailed => L.t('启动失败', 'Failed to start');
   static String get exited => L.t('矿机进程已退出', 'Miner process exited');
   static String get batteryHint => L.t(
@@ -335,14 +335,8 @@ class _MinerPageState extends State<MinerPage> {
 
   Future<void> _startMiner() async {
     final wallet = _walletCtrl.text.trim();
+    final pool = _poolCtrl.text.trim();
     setState(() => _error = null);
-
-    // 矿池地址归一化：允许直接填 host:port，缺协议头时自动补上
-    var pool = _poolCtrl.text.trim();
-    if (!pool.contains('://')) {
-      pool = 'stratum+tcp://$pool';
-    }
-    pool = pool.replaceFirst(RegExp(r'^stratum\+tcp://+'), 'stratum+tcp://');
 
     if (wallet.isEmpty) {
       setState(() => _error = S.walletRequired);
@@ -352,18 +346,13 @@ class _MinerPageState extends State<MinerPage> {
       setState(() => _error = S.walletConfidential);
       return;
     }
-    final hostPort = pool.replaceFirst('stratum+tcp://', '');
-    if (!pool.startsWith('stratum+tcp://') ||
-        !hostPort.contains(':') ||
-        hostPort.startsWith(':') ||
-        hostPort.endsWith(':')) {
+    if (!pool.startsWith('stratum+tcp://')) {
       setState(() => _error = S.poolInvalid);
       return;
     }
 
     _settings.wallet = wallet;
     _settings.pool = pool;
-    _poolCtrl.text = pool; // 回填规范化后的地址
     await _settings.save();
 
     final args = <String>[
