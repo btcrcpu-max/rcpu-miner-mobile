@@ -264,22 +264,47 @@ class _MinerPageState extends State<MinerPage> {
     });
   }
 
-  static final _reHash = RegExp(r'([\d.]+)\s*([kMG]?H/s)');
-  static final _reAcc = RegExp(r'accepted:\s*(\d+)/(\d+)');
+  // cpuminer 的真实输出格式：
+  //   [ts] thread 0: 1270 hashes, 0.22 khash/s
+  //   [ts] accepted: 5/5 (100.00%), 1.20 khash/s yes!
+  static final _reAccepted = RegExp(
+      r"accepted:\s*(\d+)/(\d+)\s*\([^)]*\)\s*,\s*([\d.]+)\s*([kKmMgG]?)hash/s");
+  static final _reThread =
+      RegExp(r"thread\s+(\d+):.*?([\d.]+)\s*([kKmMgG]?)hash/s");
+  final Map<int, double> _threadRates = <int, double>{};
+
+  static double _mult(String u) {
+    switch (u.toLowerCase()) {
+      case 'k':
+        return 1e3;
+      case 'm':
+        return 1e6;
+      case 'g':
+        return 1e9;
+      default:
+        return 1;
+    }
+  }
 
   void _parse(String line) {
-    final h = _reHash.firstMatch(line);
-    if (h != null) {
-      final v = double.tryParse(h.group(1)!) ?? 0;
-      final unit = h.group(2)!;
-      _hashrate = v * (unit == 'MH/s' ? 1e6 : (unit == 'kH/s' ? 1e3 : 1));
-    }
-    final a = _reAcc.firstMatch(line);
+    // 汇总行：同时给出股份与总算力，优先采用
+    final a = _reAccepted.firstMatch(line);
     if (a != null) {
       final acc = int.tryParse(a.group(1)!) ?? _accepted;
       final total = int.tryParse(a.group(2)!) ?? acc;
       _accepted = acc;
       _rejected = total > acc ? total - acc : 0;
+      final rate = double.tryParse(a.group(3)!) ?? 0;
+      _hashrate = rate * _mult(a.group(4)!);
+      return;
+    }
+    // 单线程行：按线程号累加，作为汇总行之间的实时值
+    final t = _reThread.firstMatch(line);
+    if (t != null) {
+      final idx = int.tryParse(t.group(1)!) ?? 0;
+      final rate = double.tryParse(t.group(2)!) ?? 0;
+      _threadRates[idx] = rate * _mult(t.group(3)!);
+      _hashrate = _threadRates.values.fold<double>(0, (x, y) => x + y);
     }
   }
 
@@ -337,7 +362,14 @@ class _MinerPageState extends State<MinerPage> {
       final bin = await _binaryPath();
       // 把定位结果先写进日志，方便排查路径问题。
       _logs.add('native dir: ${_nativeDir ?? "(none)"} [$_dirSource]');
-      final p = await Process.start(bin, args);
+      final libDir = (bin.contains('/'))
+          ? bin.substring(0, bin.lastIndexOf('/'))
+          : '.';
+      final p = await Process.start(bin, args, environment: {
+        // 矿机动态链接 libcurl / libjansson / libc++_shared，
+        // 它们和可执行文件放在同一个原生库目录里。
+        'LD_LIBRARY_PATH': '$libDir:/system/lib64:/vendor/lib64',
+      });
       _proc = p;
       _startedAt = DateTime.now();
       _hashrate = 0;
@@ -379,6 +411,7 @@ class _MinerPageState extends State<MinerPage> {
       setState(() {
         _running = false;
         _hashrate = 0;
+        _threadRates.clear();
       });
     }
   }
