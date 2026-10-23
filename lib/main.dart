@@ -26,6 +26,8 @@ class S {
   static String get stop => L.t('停止', 'Stop');
   static String get running => L.t('挖矿中', 'Mining');
   static String get stopped => L.t('已停止', 'Stopped');
+  static String get status => L.t('状态', 'Status');
+  static String get cores => L.t('核心', 'cores');
   static String get hashrate => L.t('实时算力', 'Hashrate');
   static String get shares => L.t('股份', 'Shares');
   static String get uptime => L.t('运行时长', 'Uptime');
@@ -152,6 +154,8 @@ class _MinerPageState extends State<MinerPage> {
   Process? _proc;
   StreamSubscription<String>? _sub;
   final List<String> _logs = <String>[];
+  /// 手机逻辑核心数，线程上限就取它
+  final int _cores = Platform.numberOfProcessors;
   String? _nativeDir;
   String _dirSource = '';
 
@@ -177,7 +181,7 @@ class _MinerPageState extends State<MinerPage> {
     setState(() {
       _settings.wallet = loaded.wallet;
       _settings.pool = loaded.pool;
-      _settings.threads = loaded.threads;
+      _settings.threads = loaded.threads.clamp(1, _cores);
       _settings.en = loaded.en;
       L.en = loaded.en;
       _walletCtrl.text = loaded.wallet;
@@ -485,7 +489,7 @@ class _MinerPageState extends State<MinerPage> {
           const SizedBox(height: 10),
           Row(children: [
             _statCard(
-              S.stopped,
+              S.status,
               _running ? S.running : S.stopped,
               color: _running ? const Color(0xFF3FB950) : const Color(0xFF8B949E),
             ),
@@ -523,10 +527,10 @@ class _MinerPageState extends State<MinerPage> {
               const SizedBox(width: 12),
               Expanded(
                 child: Slider(
-                  value: _settings.threads.toDouble(),
+                  value: _settings.threads.clamp(1, _cores).toDouble(),
                   min: 1,
-                  max: 16,
-                  divisions: 15,
+                  max: _cores.toDouble(),
+                  divisions: _cores > 1 ? _cores - 1 : 1,
                   label: '${_settings.threads}',
                   onChanged: _running
                       ? null
@@ -534,7 +538,7 @@ class _MinerPageState extends State<MinerPage> {
                   onChangeEnd: (_) => _settings.save(),
                 ),
               ),
-              Text('${_settings.threads}',
+              Text('${_settings.threads} / $_cores',
                   style: const TextStyle(fontWeight: FontWeight.bold)),
             ],
           ),
